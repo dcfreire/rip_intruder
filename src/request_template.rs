@@ -1,3 +1,6 @@
+//! Request Templates
+//!
+//! This module houses the structures for creating new requests from a template request.
 use anyhow::{anyhow, Result, Error};
 
 use hyper::header::HeaderName;
@@ -10,6 +13,10 @@ use std::fs::File;
 use std::io::{BufReader, prelude::*};
 
 
+/// Represents the components of a request for recreating the [Request] object
+///
+/// This struct is useful since the [Request] object is not Clone.
+/// (TODO: Add Extensions)
 pub struct RequestComponents {
     head: HeaderMap<HeaderValue>,
     uri: Uri,
@@ -19,10 +26,12 @@ pub struct RequestComponents {
 }
 
 impl RequestComponents {
+    /// Create a new empty [RequestComponents].
     fn new() -> Self {
         RequestComponents { head: HeaderMap::new(), uri: Uri::from_static("/"), version: Version::HTTP_11, body: "".to_string(), method: Method::GET }
     }
 
+    /// Insert a header into head.
     fn insert_header(&mut self, key: String, value: String) -> Result<()> {
         self.head.insert(
             <HeaderName as TryFrom<String>>::try_from(key)?,
@@ -32,16 +41,25 @@ impl RequestComponents {
     }
 }
 
+/// Stores the template
+///
+/// This struct stores the known RequestComponents, the pattern for identifying what components
+/// are not known (marked) and have to be modified before building a new request, and the
+/// marked [Part]s themselves.
 pub(crate) struct RequestTemplate {
     pub(crate) req: RequestComponents,
     pub(crate) marked: Vec<Part>,
     pub(crate) pattern: String,
 }
+
+/// Either a element in the header is marked, or an element in the body.
 pub(crate) enum Part {
     Body(String),
     Header(String),
 }
 
+
+/// Trait for creating a RequestTemplate from a file. (TODO: Implement TryFrom for other types)
 impl TryFrom<File> for RequestTemplate {
     type Error = Error;
     fn try_from(req_file: File) -> Result<Self, Self::Error> {
@@ -111,9 +129,11 @@ impl TryFrom<File> for RequestTemplate {
 
 }
 
-impl RequestTemplate {
 
-    pub(crate) fn replace_then_request(&self, pw: String) -> Result<(Request<Body>, String)> {
+
+impl RequestTemplate {
+    /// Replace the marked Parts with pw and build a new Request from them.
+    pub(crate) fn replace_then_request(&self, pw: &str) -> Result<Request<Body>> {
         let mut body: &String = &self.req.body;
         let mut req = Request::builder()
             .version(self.req.version)
@@ -137,6 +157,6 @@ impl RequestTemplate {
                 }
             }
         }
-        Ok((req.body(Body::from(body.replace(&self.pattern, &pw)))?, pw))
+        Ok(req.body(Body::from(body.replace(&self.pattern, &pw)))?)
     }
 }

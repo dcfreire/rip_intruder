@@ -1,3 +1,5 @@
+//! Intruder
+
 use super::request_template::RequestTemplate;
 use anyhow::{anyhow, Context, Result};
 
@@ -12,6 +14,11 @@ use std::io::BufReader;
 
 use indicatif::{ProgressBar, ProgressStyle};
 
+
+/// Object for managing the bruteforcing process
+///
+/// The Intruder object stores the [RequestTemplate] for creating new requests, the client for sending said
+/// requests and any configuration parameters relevant to the bruteforcing process.
 pub(crate) struct Intruder {
     pub(crate) client: Client<HttpConnector>,
     pub(crate) req_templ: RequestTemplate,
@@ -19,6 +26,7 @@ pub(crate) struct Intruder {
 }
 
 impl Intruder {
+    /// Create new Intruder
     pub(crate) fn new(req_file: File, concurrent_reqs: usize) -> Result<Self> {
         Ok(Intruder {
             client: Client::new(),
@@ -27,28 +35,36 @@ impl Intruder {
         })
     }
 
+    /// Send a single request composed of (Request, Password)
     pub(crate) async fn send_req(
         &self,
-        req: (Request<Body>, String),
+        req: Request<Body>,
+        pw: String
     ) -> Result<(Response<Body>, String)> {
-        let resp = match self.client.request(req.0).await.context(req.1.clone()) {
+        let resp = match self.client.request(req).await.context(pw.clone()) {
             Ok(out) => out,
-            Err(_) => return Err(anyhow!(req.1)),
+            Err(_) => return Err(anyhow!(pw)),
         };
-        Ok((resp, req.1))
+        Ok((resp, pw))
     }
 
+    /// Start the bruteforcing process
+    ///
+    /// This function will take the pass_file, create a separate request for each
+    /// line in it. If some of the requests don't go through it will retry with a lower
+    /// concurrency (TODO: Add an option to enable/disable this, and options for the number
+    /// of retries).
     pub(crate) async fn bruteforce(&self, pass_file: File) -> Result<String> {
         let passwords = BufReader::new(pass_file).lines();
 
         let reqs = passwords
             .filter_map(|pw| pw.ok())
-            .map(|pw| self.req_templ.replace_then_request(pw))
-            .filter_map(|req| req.ok());
+            .map(|pw| (self.req_templ.replace_then_request(&pw), pw))
+            .filter(|req| req.0.is_ok());
 
         let mut futures = vec![];
-        for req in reqs {
-            futures.push(self.send_req(req))
+        for (req, pw) in reqs {
+            futures.push(self.send_req(req?, pw));
         }
 
         let bar = ProgressBar::new(futures.len() as u64);
@@ -99,11 +115,11 @@ impl Intruder {
 
             let reqs = errors
                 .into_iter()
-                .map(|pw| self.req_templ.replace_then_request(pw))
-                .filter_map(|req| req.ok());
+                .map(|pw| (self.req_templ.replace_then_request(&pw), pw))
+                .filter(|req| req.0.is_ok());
 
-            for req in reqs {
-                new_futures.push(self.send_req(req))
+            for (req, pw) in reqs {
+                new_futures.push(self.send_req(req?, pw));
             }
 
             futures = stream::iter(new_futures).buffer_unordered(conc);

@@ -1,3 +1,24 @@
+//! rip_intruder
+//!
+//! This program is intended to be a viable alternative to Burp Suite's Intruder.
+//! Eventually implementing all of its most relevant features. In its current
+//! state the only supported attack type is the "Battering Ram" attack type,
+//! where using a single set of payloads it places the same payload at all
+//! defined payload positions.
+//!
+//! ```plaintext
+//! Usage: rip_intruder [OPTIONS] <REQ_F> <PASS_F>
+//!Arguments:
+//!<REQ_F>   Path to request template file
+//!<PASS_F>  Path to password file
+//!
+//!Options:
+//!-c, --concurrent-requests <CONCURRENT_REQUESTS>  Number of concurrent requests [default: 1]
+//!-h, --help                                       Print help information
+//!-V, --version                                    Print version information
+//! ```
+//!
+
 use crate::intruder::Intruder;
 use anyhow::Result;
 use std::fs::File;
