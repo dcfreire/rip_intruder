@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Result, Error};
 
 use hyper::header::HeaderName;
 use hyper::http::header::HeaderValue;
@@ -42,9 +42,9 @@ pub(crate) enum Part {
     Header(String),
 }
 
-impl RequestTemplate {
-
-    pub(crate) fn from_file(req_file: File) -> Result<Self> {
+impl TryFrom<File> for RequestTemplate {
+    type Error = Error;
+    fn try_from(req_file: File) -> Result<Self, Self::Error> {
         let pattern = "§§";
 
         let mut lines = BufReader::new(req_file).lines();
@@ -108,6 +108,10 @@ impl RequestTemplate {
             pattern: pattern.to_string(),
         })
     }
+
+}
+
+impl RequestTemplate {
 
     pub(crate) fn replace_then_request(&self, pw: String) -> Result<(Request<Body>, String)> {
         let mut body: &String = &self.req.body;

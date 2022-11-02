@@ -22,7 +22,7 @@ impl Intruder {
     pub(crate) fn new(req_file: File, concurrent_reqs: usize) -> Result<Self> {
         Ok(Intruder {
             client: Client::new(),
-            req_templ: RequestTemplate::from_file(req_file)?,
+            req_templ: RequestTemplate::try_from(req_file)?,
             concurrent_reqs
         })
     }
