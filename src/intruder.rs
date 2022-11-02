@@ -10,7 +10,7 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
 
-use indicatif::ProgressBar;
+use indicatif::{ProgressBar, ProgressStyle};
 
 pub(crate) struct Intruder {
     pub(crate) client: Client<HttpConnector>,
@@ -52,11 +52,12 @@ impl Intruder {
         }
 
         let bar = ProgressBar::new(futures.len() as u64);
+        bar.set_style(ProgressStyle::with_template("{msg} {spinner}\n[{elapsed_precise}] {wide_bar} {pos}/{len}\nReq/sec: {per_sec}\nETA: {eta}")?);
 
         let mut conc = self.concurrent_reqs;
         let mut futures = stream::iter(futures).buffer_unordered(conc);
         let mut errors: Vec<String> = vec![];
-
+        bar.set_message("Sending requests");
         // do while errors is not empty
         while {
             while let Some(res) = futures.next().await {
@@ -78,26 +79,37 @@ impl Intruder {
             }
             !errors.is_empty()
         } {
+            bar.set_message(format!("Completed with {} errors", errors.len()));
+
             // If errors is not empty either the request is malformed or you are requesting too fast
             if bar.position() == 0 {
                 return Err(anyhow!("Your requests are not getting through"));
             }
+
+            conc = conc/2;
+            if conc == 0 {
+                bar.finish();
+                return Err(anyhow!("Search aborted"));
+            }
+
+            bar.set_message(format!("Completed with {} errors, retrying with half ({}) the concurrency", errors.len(), conc));
+            bar.set_length(errors.len() as u64);
+            bar.set_position(0);
             let mut new_futures = vec![];
+
             let reqs = errors
                 .into_iter()
                 .map(|pw| self.req_templ.replace_then_request(pw))
                 .filter_map(|req| req.ok());
+
             for req in reqs {
                 new_futures.push(self.send_req(req))
             }
-            conc = conc/2;
-            if conc == 0 {
-                break;
-            }
+
             futures = stream::iter(new_futures).buffer_unordered(conc);
             errors = vec![];
         }
-
+        bar.finish();
         Err(anyhow!("Password not found"))
     }
 }
