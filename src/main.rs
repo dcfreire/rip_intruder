@@ -14,6 +14,7 @@
 //!
 //!Options:
 //!-c, --concurrent-requests <CONCURRENT_REQUESTS>  Number of concurrent requests [default: 1]
+//!-p, --pattern <PATTERN>                          Regex pattern [default: §§]
 //!-h, --help                                       Print help information
 //!-V, --version                                    Print version information
 //! ```
@@ -40,13 +41,17 @@ struct Args {
     /// Number of concurrent requests
     #[arg(short, long, default_value_t = 1)]
     concurrent_requests: usize,
+
+    /// Regex pattern
+    #[arg(short, long, default_value_t = str::to_string("§§"))]
+    pattern: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let intruder = Intruder::new(File::open(&args.req_f)?, args.concurrent_requests)?;
+    let intruder = Intruder::new(File::open(&args.req_f)?, args.concurrent_requests, args.pattern)?;
 
     let pass_file = File::open(&args.pass_f)?;
     let pw = intruder.bruteforce(pass_file).await?;

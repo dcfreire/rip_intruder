@@ -1,4 +1,7 @@
 //! Intruder
+//! (TODO: MAKE CONFIG TYPE FOR INTRUDER)
+
+use crate::request_template::ReqTemplateFile;
 
 use super::request_template::RequestTemplate;
 use anyhow::{anyhow, Context, Result};
@@ -27,10 +30,10 @@ pub(crate) struct Intruder {
 
 impl Intruder {
     /// Create new Intruder
-    pub(crate) fn new(req_file: File, concurrent_reqs: usize) -> Result<Self> {
+    pub(crate) fn new(req_file: File, concurrent_reqs: usize, pattern: String) -> Result<Self> {
         Ok(Intruder {
             client: Client::new(),
-            req_templ: RequestTemplate::try_from(req_file)?,
+            req_templ: RequestTemplate::try_from(ReqTemplateFile::new(req_file, pattern)?)?,
             concurrent_reqs
         })
     }

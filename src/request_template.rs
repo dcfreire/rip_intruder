@@ -1,17 +1,17 @@
 //! Request Templates
 //!
 //! This module houses the structures for creating new requests from a template request.
-use anyhow::{anyhow, Result, Error};
+use anyhow::{anyhow, Error, Result};
 
 use hyper::header::HeaderName;
 use hyper::http::header::HeaderValue;
-use hyper::{Body, Request, Uri, Version, HeaderMap, Method};
+use hyper::{Body, HeaderMap, Method, Request, Uri, Version};
 
 use itertools::Itertools;
+use regex::Regex;
 
 use std::fs::File;
-use std::io::{BufReader, prelude::*};
-
+use std::io::{prelude::*, BufReader};
 
 /// Represents the components of a request for recreating the [Request] object
 ///
@@ -22,13 +22,19 @@ pub struct RequestComponents {
     uri: Uri,
     version: Version,
     body: String,
-    method: Method
+    method: Method,
 }
 
 impl RequestComponents {
     /// Create a new empty [RequestComponents].
     fn new() -> Self {
-        RequestComponents { head: HeaderMap::new(), uri: Uri::from_static("/"), version: Version::HTTP_11, body: "".to_string(), method: Method::GET }
+        RequestComponents {
+            head: HeaderMap::new(),
+            uri: Uri::from_static("/"),
+            version: Version::HTTP_11,
+            body: "".to_string(),
+            method: Method::GET,
+        }
     }
 
     /// Insert a header into head.
@@ -49,7 +55,7 @@ impl RequestComponents {
 pub(crate) struct RequestTemplate {
     pub(crate) req: RequestComponents,
     pub(crate) marked: Vec<Part>,
-    pub(crate) pattern: String,
+    pub(crate) pattern: Regex,
 }
 
 /// Either a element in the header is marked, or an element in the body.
@@ -58,13 +64,12 @@ pub(crate) enum Part {
     Header(String),
 }
 
-
 /// Trait for creating a RequestTemplate from a file. (TODO: Implement TryFrom for other types)
-impl TryFrom<File> for RequestTemplate {
+impl TryFrom<ReqTemplateFile> for RequestTemplate {
     type Error = Error;
-    fn try_from(req_file: File) -> Result<Self, Self::Error> {
-        let pattern = "§§";
-
+    fn try_from(req_templ: ReqTemplateFile) -> Result<Self, Self::Error> {
+        let pattern = req_templ.pattern;
+        let req_file = req_templ.file;
         let mut lines = BufReader::new(req_file).lines();
         let request_line = lines.next().ok_or(anyhow!("File is empty"))??;
         let (method, uri, httpver) = request_line
@@ -80,7 +85,7 @@ impl TryFrom<File> for RequestTemplate {
             "HTTP/1" => Version::HTTP_10,
             "HTTP/2" => Version::HTTP_2,
             "HTTP/3" => Version::HTTP_3,
-            _ => Version::HTTP_11
+            _ => Version::HTTP_11,
         };
         req.method = Method::try_from(method)?;
 
@@ -89,7 +94,7 @@ impl TryFrom<File> for RequestTemplate {
             if header.is_empty() {
                 break;
             }
-            if header.contains(pattern) {
+            if pattern.is_match(&header) {
                 marked.push(Part::Header(header));
                 continue;
             }
@@ -116,20 +121,43 @@ impl TryFrom<File> for RequestTemplate {
         }
 
         let body = lines.filter_map(|l| l.ok()).join("");
-        if body.contains(pattern) {
+        if pattern.is_match(&body) {
             marked.push(Part::Body(body));
         }
 
         Ok(Self {
             req: req,
             marked,
-            pattern: pattern.to_string(),
+            pattern: pattern,
         })
     }
-
 }
 
+impl TryFrom<File> for RequestTemplate {
+    type Error = Error;
+    fn try_from(req_file: File) -> Result<Self, Self::Error> {
+        RequestTemplate::try_from(ReqTemplateFile {
+            file: req_file,
+            pattern: Regex::new("§§")?,
+        })
+    }
+}
 
+/// Represents a request template file
+/// (TODO: Make a more generic type for inputted templates)
+pub(crate) struct ReqTemplateFile {
+    file: File,
+    pattern: Regex,
+}
+
+impl ReqTemplateFile {
+    pub(crate) fn new(file: File, pattern: String) -> Result<Self> {
+        Ok(Self {
+            file,
+            pattern: Regex::new(&pattern)?
+        })
+    }
+}
 
 impl RequestTemplate {
     /// Replace the marked Parts with pw and build a new Request from them.
@@ -147,16 +175,17 @@ impl RequestTemplate {
                     let (key, value) = header
                         .split(':')
                         .map(str::trim)
-                        .map(|s| s.replace(&self.pattern, &pw))
+                        .map(|s| self.pattern.replace_all(s, pw))
                         .next_tuple()
                         .ok_or(anyhow!("Invalid Header"))?;
-                    req = req.header(key, value);
+
+                    req = req.header(key.to_string(), value.to_string());
                 }
                 Part::Body(bd) => {
                     body = bd;
                 }
             }
         }
-        Ok(req.body(Body::from(body.replace(&self.pattern, &pw)))?)
+        Ok(req.body(Body::from(self.pattern.replace_all(body, pw).to_string()))?)
     }
 }
