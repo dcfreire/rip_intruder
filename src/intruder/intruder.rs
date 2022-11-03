@@ -1,10 +1,9 @@
 //! Intruder
-//! (TODO: MAKE CONFIG TYPE FOR INTRUDER)
+use crate::intruder::request_template::{ReqTemplateFile, RequestTemplate};
+use crate::intruder::output::{Writer, OutLine};
 
-use crate::request_template::ReqTemplateFile;
 use crate::{Args, HitType};
 
-use super::request_template::RequestTemplate;
 use anyhow::{anyhow, Context, Result};
 
 use futures::{stream, StreamExt};
@@ -18,6 +17,7 @@ use std::io::BufReader;
 
 use indicatif::{ProgressBar, ProgressStyle};
 
+/// Struct for detecting hits
 struct Hit {
     hit_type: HitType,
 }
@@ -47,9 +47,9 @@ impl Hit {
     }
 }
 
-/// Object for managing the bruteforcing process
+/// Struct for managing the bruteforcing process
 ///
-/// The Intruder object stores the [RequestTemplate] for creating new requests, the client for sending said
+/// The Intruder struct stores the [RequestTemplate] for creating new requests, the client for sending said
 /// requests and any configuration parameters relevant to the bruteforcing process.
 pub(crate) struct Intruder {
     client: Client<HttpConnector>,
@@ -68,38 +68,39 @@ impl Intruder {
                 &config.pattern,
             )?)?,
             writer: match &config.of {
-                Some(path) => Some(Box::new(OpenOptions::new().write(true).create(true).open(path)?)),
-                None => Some(Box::new(std::io::stdout()))
+                Some(path) => Some(Box::new(
+                    OpenOptions::new()
+                        .write(true)
+                        .truncate(true)
+                        .create(true)
+                        .open(path)?,
+                )),
+                None => Some(Box::new(std::io::stdout())),
             },
             config,
         })
     }
 
-    /// Send a single request, returns a tuple containg the response and the password
+    /// Send a single request, returns a tuple containg the response and the payload
     async fn send_req(
         &self,
         req: Request<Body>,
-        pw: String,
+        payload: String,
     ) -> Result<(Response<Body>, String)> {
-
-        let resp = match self.client.request(req).await.context(pw.clone()) {
+        let resp = match self.client.request(req).await.context(payload.clone()) {
             Ok(out) => out,
-            Err(_) => return Err(anyhow!(pw)),
+            Err(_) => return Err(anyhow!(payload)),
         };
-        Ok((resp, pw))
-
+        Ok((resp, payload))
     }
 
-    fn get_reqs<T>(
-        &self,
-        passwords: T,
-    ) -> impl Iterator<Item = (Result<Request<Body>>, String)> + '_
+    fn get_reqs<T>(&self, payloads: T) -> impl Iterator<Item = (Result<Request<Body>>, String)> + '_
     where
         T: IntoIterator<Item = String> + 'static,
     {
-        passwords
+        payloads
             .into_iter()
-            .map(|pw| (self.req_templ.replace_then_request(&pw), pw))
+            .map(|payload| (self.req_templ.replace_then_request(&payload), payload))
             .filter(|req| req.0.is_ok())
     }
 
@@ -110,51 +111,62 @@ impl Intruder {
     /// concurrency (TODO: Add an option to enable/disable this, and options for the number
     /// of retries).
     pub(crate) async fn bruteforce(&mut self) -> Result<()> {
-        let mut writer = self.writer.take().unwrap();
-        let passwords = BufReader::new(File::open(&self.config.pass_f)?)
-            .lines()
-            .filter_map(|pw| pw.ok());
+        // Take the writer, having ownership of it is required since we borrow self for the futures
+        let temp_writer = self.writer.take().unwrap();
+
+        // Create the hit detector
         let hit_d = Hit::new(self.config.hit_type);
-        let reqs = self.get_reqs(passwords);
+
+        // Iterator for the passwords with any errors filtered out
+        let payloads = BufReader::new(File::open(&self.config.pass_f)?)
+            .lines()
+            .filter_map(|payload| payload.ok());
+
+        let reqs = self.get_reqs(payloads);
 
         let mut futures = vec![];
-        for (req, pw) in reqs {
-            futures.push(self.send_req(req?, pw));
+        for (req, payload) in reqs {
+            futures.push(self.send_req(req?, payload));
         }
 
+        // Progress bar configuration
         let bar = ProgressBar::new(futures.len() as u64);
         bar.set_style(ProgressStyle::with_template("{msg} {spinner}\n[{elapsed_precise}] {wide_bar} {pos}/{len}\nReq/sec: {per_sec}\nETA: {eta}")?);
+        bar.set_message("Sending requests");
 
+        // Some variables we'll be using
         let mut conc = self.config.concurrent_requests;
         let mut futures = stream::iter(futures).buffer_unordered(conc);
         let mut errors: Vec<String> = vec![];
         let mut hits = 0;
-        bar.set_message("Sending requests");
+
+        let mut writer = match self.config.of {
+            Some(_) => Writer::File(temp_writer),
+            None => Writer::Bar(&bar),
+        };
         // do while errors is not empty
         while {
             while let Some(res) = futures.next().await {
-                let (resp, pw);
+                let (resp, payload);
                 match res {
                     Ok(result) => {
                         bar.inc(1);
-                        (resp, pw) = result;
+                        (resp, payload) = result;
                     }
                     Err(err) => {
                         errors.push(err.to_string());
                         continue;
-                        //
                     }
                 };
+
                 if hit_d.is_hit(&resp) {
-                    let msg = format!("{:}, {:}, {:}", hits, pw, resp.status());
                     hits += 1;
-                    if let Some(_) = self.config.of {
-                        writeln!(writer, "{:}", msg)?;
-                    } else {
-                        bar.println(msg);
-                    }
+                    OutLine::new(resp, payload, hits)
+                        .await?
+                        .output(&self.config, &mut writer)
+                        .await?;
                 }
-                if hits == self.config.stop {
+                if hits as isize == self.config.stop {
                     return Ok(());
                 }
             }
@@ -184,8 +196,8 @@ impl Intruder {
 
             let reqs = self.get_reqs(errors);
 
-            for (req, pw) in reqs {
-                new_futures.push(self.send_req(req?, pw));
+            for (req, payload) in reqs {
+                new_futures.push(self.send_req(req?, payload));
             }
 
             futures = stream::iter(new_futures).buffer_unordered(conc);

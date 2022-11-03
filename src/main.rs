@@ -8,33 +8,41 @@
 //!
 //! ```plaintext
 //! Usage: rip_intruder [OPTIONS] <REQ_F> <PASS_F>
+//!
 //! Arguments:
-//! <REQ_F>   Path to request template file
-//! <PASS_F>  Path to password file
+//!   <REQ_F>   Path to request template file
+//!   <PASS_F>  Path to password file
 //!
 //! Options:
-//! -c, --concurrent-requests <CONCURRENT_REQUESTS>  Number of concurrent requests [default: 1]
-//! -p, --pattern <PATTERN>                          Regex pattern [default: §§]
-//! -h, --help                                       Print help information
-//! -V, --version                                    Print version information
+//!   -c, --concurrent-requests <CONCURRENT_REQUESTS>
+//!           Number of concurrent requests [default: 1]
+//!   -p, --pattern <PATTERN>
+//!           Regex pattern [default: §§]
+//!       --hit-type <HIT_TYPE>
+//!           What is considered a hit [default: ok] [possible values: ok, all]
+//!   -o <OF>
+//!           Output to file
+//!   -s <STOP>
+//!           Stop after n hits, -1 to try all provided words [default: 1]
+//!       --format <OUT_FORMAT>
+//!           Output format [default: csv] [possible values: csv, jsonl]
+//!   -h, --help
+//!           Print help information
+//!   -V, --version
+//!           Print version information
 //! ```
-
-use crate::intruder::Intruder;
-use anyhow::Result;
-use std::path::PathBuf;
-mod request_template;
-use clap::{Parser, ValueEnum};
+mod arg_utils;
 mod intruder;
 
-#[derive(Copy, Clone, ValueEnum, Debug)]
-pub(crate) enum HitType {
-    Ok,
-    All
-}
+use crate::arg_utils::{HitType, OutputFormat};
+use crate::intruder::intruder::Intruder;
+use anyhow::Result;
+use clap::Parser;
+use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-struct Args {
+pub(crate) struct Args {
     /// Path to request template file
     #[arg(index = 1, value_hint = clap::ValueHint::FilePath)]
     req_f: std::path::PathBuf,
@@ -61,19 +69,19 @@ struct Args {
 
     /// Stop after n hits, -1 to try all provided words
     #[arg(short, default_value_t = 1, allow_hyphen_values = true)]
-    stop: isize
+    stop: isize,
+
+    /// Output format
+    #[arg(long = "format", value_enum, default_value_t = OutputFormat::Csv)]
+    out_format: OutputFormat,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = Args::parse();
 
-
-    let mut intruder = Intruder::new(
-        config
-    )?;
+    let mut intruder = Intruder::new(config)?;
 
     intruder.bruteforce().await?;
-
     Ok(())
 }
