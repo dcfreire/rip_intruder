@@ -151,10 +151,10 @@ pub(crate) struct ReqTemplateFile {
 }
 
 impl ReqTemplateFile {
-    pub(crate) fn new(file: File, pattern: String) -> Result<Self> {
+    pub(crate) fn new(file: File, pattern: &str) -> Result<Self> {
         Ok(Self {
             file,
-            pattern: Regex::new(&pattern)?
+            pattern: Regex::new(pattern)?
         })
     }
 }

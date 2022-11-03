@@ -1,6 +1,7 @@
 //! Intruder
 //! (TODO: MAKE CONFIG TYPE FOR INTRUDER)
 
+use crate::{Filter, Args};
 use crate::request_template::ReqTemplateFile;
 
 use super::request_template::RequestTemplate;
@@ -18,6 +19,38 @@ use std::io::BufReader;
 use indicatif::{ProgressBar, ProgressStyle};
 
 
+
+struct Hit {
+    filter: Filter
+}
+
+impl Hit {
+    fn new(filter: Filter) -> Self {
+        Self{filter}
+    }
+
+
+    fn hit(&self, resp: Response<Body>) -> bool {
+        match self.filter {
+            Filter::Success => Hit::success_hit(resp),
+            Filter::All => Hit::all_hit()
+        }
+    }
+
+    fn all_hit() -> bool {
+        true
+    }
+
+    fn success_hit(resp: Response<Body>) -> bool {
+        if resp.status() == 200 {
+            true
+        } else {
+            false
+        }
+    }
+
+}
+
 /// Object for managing the bruteforcing process
 ///
 /// The Intruder object stores the [RequestTemplate] for creating new requests, the client for sending said
@@ -25,16 +58,16 @@ use indicatif::{ProgressBar, ProgressStyle};
 pub(crate) struct Intruder {
     pub(crate) client: Client<HttpConnector>,
     pub(crate) req_templ: RequestTemplate,
-    concurrent_reqs: usize
+    config: Args
 }
 
 impl Intruder {
     /// Create new Intruder
-    pub(crate) fn new(req_file: File, concurrent_reqs: usize, pattern: String) -> Result<Self> {
+    pub(crate) fn new(config: Args) -> Result<Self> {
         Ok(Intruder {
             client: Client::new(),
-            req_templ: RequestTemplate::try_from(ReqTemplateFile::new(req_file, pattern)?)?,
-            concurrent_reqs
+            req_templ: RequestTemplate::try_from(ReqTemplateFile::new(File::open(&config.req_f)?, &config.pattern)?)?,
+            config
         })
     }
 
@@ -51,19 +84,25 @@ impl Intruder {
         Ok((resp, pw))
     }
 
+    fn get_reqs<T>(&self, passwords: T) -> impl Iterator<Item = (Result<Request<Body>>, String)> + '_ where
+        T: IntoIterator<Item = String> + 'static
+    {
+        passwords.into_iter()
+            .map(|pw| (self.req_templ.replace_then_request(&pw), pw))
+            .filter(|req| req.0.is_ok())
+    }
+
+
     /// Start the bruteforcing process
     ///
     /// This function will take the pass_file, create a separate request for each
     /// line in it. If some of the requests don't go through it will retry with a lower
     /// concurrency (TODO: Add an option to enable/disable this, and options for the number
     /// of retries).
-    pub(crate) async fn bruteforce(&self, pass_file: File) -> Result<String> {
-        let passwords = BufReader::new(pass_file).lines();
-
-        let reqs = passwords
-            .filter_map(|pw| pw.ok())
-            .map(|pw| (self.req_templ.replace_then_request(&pw), pw))
-            .filter(|req| req.0.is_ok());
+    pub(crate) async fn bruteforce(&self) -> Result<String> {
+        let passwords = BufReader::new(File::open(&self.config.pass_f)?).lines().filter_map(|pw| pw.ok());
+        let hit_d = Hit::new(self.config.filter);
+        let reqs = self.get_reqs(passwords);
 
         let mut futures = vec![];
         for (req, pw) in reqs {
@@ -73,7 +112,7 @@ impl Intruder {
         let bar = ProgressBar::new(futures.len() as u64);
         bar.set_style(ProgressStyle::with_template("{msg} {spinner}\n[{elapsed_precise}] {wide_bar} {pos}/{len}\nReq/sec: {per_sec}\nETA: {eta}")?);
 
-        let mut conc = self.concurrent_reqs;
+        let mut conc = self.config.concurrent_requests;
         let mut futures = stream::iter(futures).buffer_unordered(conc);
         let mut errors: Vec<String> = vec![];
         bar.set_message("Sending requests");
@@ -92,7 +131,7 @@ impl Intruder {
                         //
                     }
                 };
-                if resp.status() == 200 {
+                if hit_d.hit(resp) {
                     return Ok(pw);
                 }
             }
@@ -116,10 +155,7 @@ impl Intruder {
             bar.set_position(0);
             let mut new_futures = vec![];
 
-            let reqs = errors
-                .into_iter()
-                .map(|pw| (self.req_templ.replace_then_request(&pw), pw))
-                .filter(|req| req.0.is_ok());
+            let reqs = self.get_reqs(errors);
 
             for (req, pw) in reqs {
                 new_futures.push(self.send_req(req?, pw));
