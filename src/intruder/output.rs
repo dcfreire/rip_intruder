@@ -1,11 +1,53 @@
+use crate::arg_types::HitType;
 use crate::{Args, OutputFormat};
+
 use anyhow::Result;
+
+use futures::StreamExt;
+
 use hyper::body;
 use hyper::{Body, Response, StatusCode};
-use indicatif::ProgressBar;
+
+use indicatif::{ProgressBar, ProgressStyle};
+
 use serde_json::{json, Value};
+
 use std::fmt::Display;
+use std::fs::OpenOptions;
 use std::io::prelude::*;
+use std::path::PathBuf;
+
+use super::intruder::Intruder;
+
+/// Struct for detecting hits
+struct Hit {
+    hit_type: HitType,
+}
+
+impl Hit {
+    fn new(hit_type: HitType) -> Self {
+        Self { hit_type }
+    }
+
+    fn is_hit(&self, resp: &Response<Body>) -> bool {
+        match self.hit_type {
+            HitType::Ok => Hit::success_hit(&resp),
+            HitType::All => Hit::all_hit(),
+        }
+    }
+
+    fn all_hit() -> bool {
+        true
+    }
+
+    fn success_hit(resp: &Response<Body>) -> bool {
+        if resp.status() == 200 {
+            true
+        } else {
+            false
+        }
+    }
+}
 
 /// Represents one line of the output
 pub(crate) struct OutLine {
@@ -49,6 +91,7 @@ impl OutLine {
         Ok(bar.println(out.to_string()))
     }
 
+    /// Writes output, consuming self in the process.
     pub(crate) async fn output<'a>(self, config: &Args, writer: &mut Writer<'_>) -> Result<()> {
         let out = self.create_output(config).await?;
         match writer {
@@ -79,5 +122,70 @@ impl OutLine {
     async fn output_file(out: Out, writer: &mut Box<dyn Write>) -> Result<()> {
         writeln!(writer, "{:}", out)?;
         Ok(())
+    }
+}
+
+pub struct Cli {
+    out_file: Option<PathBuf>,
+    hit_d: Hit,
+    bar: ProgressBar,
+}
+
+impl Cli {
+    pub fn new(config: &Args) -> Self {
+        let bar = ProgressBar::new(0);
+        bar.set_style(ProgressStyle::with_template("{msg} {spinner}\n[{elapsed_precise}] {wide_bar} {pos}/{len}\nReq/sec: {per_sec}\nETA: {eta}").unwrap());
+
+        Self {
+            bar,
+            out_file: config.of.clone(),
+            hit_d: Hit::new(config.hit_type),
+        }
+    }
+
+    pub async fn run(&self, intr: Intruder) -> Result<Vec<String>> {
+        let mut writer = match &self.out_file {
+            Some(path) => Writer::File(Box::new(
+                OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .create(true)
+                    .open(path)?,
+            )),
+            None => Writer::Bar(&self.bar),
+        };
+        let payloads: Vec<String> = intr.get_payload_buffer().collect();
+        self.bar.set_length(payloads.len() as u64);
+
+        let mut responses = intr.bruteforce(payloads).await?;
+        let mut hits = 0;
+        let mut errors = vec![];
+
+        while let Some(resp_pay) = responses.next().await {
+            let (resp, payload);
+            match resp_pay {
+                Ok(result) => {
+                    self.bar.inc(1);
+                    (resp, payload) = result;
+                }
+                Err(payload) => {
+                    errors.push(payload.to_string());
+                    continue;
+                }
+            }
+
+            if self.hit_d.is_hit(&resp) {
+                hits += 1;
+                OutLine::new(resp, payload, hits)
+                    .await?
+                    .output(&intr.config, &mut writer)
+                    .await?;
+            }
+            if hits as isize == intr.config.stop {
+                break;
+            }
+        }
+        self.bar.finish();
+        Ok(errors)
     }
 }

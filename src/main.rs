@@ -31,18 +31,21 @@
 //!   -V, --version
 //!           Print version information
 //! ```
-mod arg_utils;
+mod arg_types;
 mod intruder;
 
-use crate::arg_utils::{HitType, OutputFormat};
+use crate::arg_types::{HitType, OutputFormat};
 use crate::intruder::intruder::Intruder;
 use anyhow::Result;
 use clap::Parser;
+use intruder::output::Cli;
+use std::io::stderr;
+use std::io::Write;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-pub(crate) struct Args {
+pub struct Args {
     /// Path to request template file
     #[arg(index = 1, value_hint = clap::ValueHint::FilePath)]
     req_f: std::path::PathBuf,
@@ -72,7 +75,7 @@ pub(crate) struct Args {
     stop: isize,
 
     /// Output format
-    #[arg(long = "format", value_enum, default_value_t = OutputFormat::Csv)]
+    #[arg(short = 'f', long = "format", value_enum, default_value_t = OutputFormat::Csv)]
     out_format: OutputFormat,
 }
 
@@ -80,8 +83,16 @@ pub(crate) struct Args {
 async fn main() -> Result<()> {
     let config = Args::parse();
 
-    let mut intruder = Intruder::new(config)?;
+    let cli = Cli::new(&config);
+    let intruder = Intruder::new(config)?;
+    let errors = cli.run(intruder).await?;
+    if errors.len() > 0 {
+        writeln!(
+            stderr(),
+            "These payloads were not sent successfully: {:?}",
+            errors
+        )?;
+    }
 
-    intruder.bruteforce().await?;
     Ok(())
 }
