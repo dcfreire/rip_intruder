@@ -1,7 +1,4 @@
 //! Intruder
-use crate::intruder::request_template::{ReqTemplateFile, RequestTemplate};
-use crate::Args;
-
 use anyhow::{anyhow, Context, Result};
 
 use futures::{stream, Stream, StreamExt};
@@ -12,6 +9,16 @@ use hyper::{Body, Client, Request, Response};
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
+use std::path::PathBuf;
+
+use crate::request_template::{RequestTemplate, ReqTemplateFile};
+
+pub struct IntruderConfig {
+    pub req_f: PathBuf,
+    pub pass_f: PathBuf,
+    pub pattern: String,
+    pub concurrent_requests: usize
+}
 
 /// Struct for managing the bruteforcing process
 ///
@@ -20,12 +27,12 @@ use std::io::BufReader;
 pub struct Intruder {
     client: Client<HttpConnector>,
     req_templ: RequestTemplate,
-    pub(crate) config: Args,
+    pub config: IntruderConfig,
 }
 
 impl Intruder {
     /// Create new Intruder
-    pub(crate) fn new(config: Args) -> Result<Self> {
+    pub fn new(config: IntruderConfig) -> Result<Self> {
         Ok(Intruder {
             client: Client::new(),
             req_templ: RequestTemplate::try_from(ReqTemplateFile::new(
@@ -59,15 +66,15 @@ impl Intruder {
             .filter(|req| req.0.is_ok())
     }
 
-    pub(crate) fn get_payload_buffer(&self) -> impl Iterator<Item = String> {
+    pub fn get_payload_buffer(&self) -> impl Iterator<Item = String> {
         // Iterator for the passwords with any errors filtered out
         BufReader::new(File::open(&self.config.pass_f).unwrap())
             .lines()
             .filter_map(|payload| payload.ok())
     }
 
-    /// Creates a stream for asynchronously iterating over the responses for the bruteforce attempt
-    pub(crate) async fn bruteforce<T>(
+    /// Creates a stream for asynchronously iterating over the responses for the provided payloads
+    pub async fn bruteforce<T>(
         &self,
         payloads: T,
     ) -> Result<impl Stream<Item = Result<(Response<Body>, String)>> + '_>

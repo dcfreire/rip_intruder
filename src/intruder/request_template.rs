@@ -52,14 +52,14 @@ impl RequestComponents {
 /// This struct stores the known RequestComponents, the pattern for identifying what components
 /// are not known (marked) and have to be modified before building a new request, and the
 /// marked [Part]s themselves.
-pub(crate) struct RequestTemplate {
-    pub(crate) req: RequestComponents,
-    pub(crate) marked: Vec<Part>,
-    pub(crate) pattern: Regex,
+pub struct RequestTemplate {
+    pub req: RequestComponents,
+    pub marked: Vec<Part>,
+    pub pattern: Regex,
 }
 
 /// Either a element in the header is marked, or an element in the body.
-pub(crate) enum Part {
+pub enum Part {
     Body(String),
     Header(String),
 }
@@ -145,13 +145,13 @@ impl TryFrom<File> for RequestTemplate {
 
 /// Represents a request template file
 /// (TODO: Make a more generic type for inputted templates)
-pub(crate) struct ReqTemplateFile {
+pub struct ReqTemplateFile {
     file: File,
     pattern: Regex,
 }
 
 impl ReqTemplateFile {
-    pub(crate) fn new(file: File, pattern: &str) -> Result<Self> {
+    pub fn new(file: File, pattern: &str) -> Result<Self> {
         Ok(Self {
             file,
             pattern: Regex::new(pattern)?
@@ -161,7 +161,7 @@ impl ReqTemplateFile {
 
 impl RequestTemplate {
     /// Replace the marked Parts with pw and build a new Request from them.
-    pub(crate) fn replace_then_request(&self, pw: &str) -> Result<Request<Body>> {
+    pub fn replace_then_request(&self, pw: &str) -> Result<Request<Body>> {
         let mut body: &String = &self.req.body;
         let mut req = Request::builder()
             .version(self.req.version)

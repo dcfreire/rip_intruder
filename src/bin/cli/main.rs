@@ -32,13 +32,15 @@
 //!           Print version information
 //! ```
 mod arg_types;
-mod intruder;
+mod output;
 
-use crate::arg_types::{HitType, OutputFormat};
-use crate::intruder::intruder::Intruder;
+use intruder::intruder::Intruder;
+use intruder::intruder::IntruderConfig;
+use output::Cli;
+use arg_types::{HitType, OutputFormat};
 use anyhow::Result;
 use clap::Parser;
-use intruder::output::Cli;
+use output::CliConfig;
 use std::io::stderr;
 use std::io::Write;
 use std::path::PathBuf;
@@ -68,7 +70,7 @@ pub struct Args {
 
     /// Output to file
     #[arg(short)]
-    of: Option<PathBuf>,
+    out_file: Option<PathBuf>,
 
     /// Stop after n hits, -1 to try all provided words
     #[arg(short, default_value_t = 1, allow_hyphen_values = true)]
@@ -79,12 +81,31 @@ pub struct Args {
     out_format: OutputFormat,
 }
 
+fn get_configs(args: Args) -> (CliConfig, IntruderConfig){
+    let cliconfig = CliConfig{
+        out_format: args.out_format,
+        out_file: args.out_file,
+        hit_type: args.hit_type,
+        stop: args.stop
+    };
+
+    let intruderconfig = IntruderConfig {
+        req_f: args.req_f,
+        pass_f: args.pass_f,
+        pattern: args.pattern,
+        concurrent_requests: args.concurrent_requests
+    };
+
+    (cliconfig, intruderconfig)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let config = Args::parse();
+    let args = Args::parse();
+    let (cliconfig, intruderconfig) = get_configs(args);
 
-    let cli = Cli::new(&config);
-    let intruder = Intruder::new(config)?;
+    let cli = Cli::new(cliconfig);
+    let intruder = Intruder::new(intruderconfig)?;
     let errors = cli.run(intruder).await?;
     if errors.len() > 0 {
         writeln!(

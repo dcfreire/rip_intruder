@@ -1,23 +1,30 @@
-use crate::arg_types::HitType;
-use crate::{Args, OutputFormat};
+
 
 use anyhow::Result;
 
-use futures::StreamExt;
 
 use hyper::body;
 use hyper::{Body, Response, StatusCode};
 
 use indicatif::{ProgressBar, ProgressStyle};
 
+use intruder::intruder::Intruder;
 use serde_json::{json, Value};
 
 use std::fmt::Display;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::path::PathBuf;
+use futures::StreamExt;
 
-use super::intruder::Intruder;
+use crate::arg_types::{OutputFormat, HitType};
+
+pub struct CliConfig {
+    pub out_format: OutputFormat,
+    pub out_file: Option<PathBuf>,
+    pub hit_type: HitType,
+    pub stop: isize
+}
 
 /// Struct for detecting hits
 struct Hit {
@@ -92,7 +99,7 @@ impl OutLine {
     }
 
     /// Writes output, consuming self in the process.
-    pub(crate) async fn output<'a>(self, config: &Args, writer: &mut Writer<'_>) -> Result<()> {
+    pub(crate) async fn output<'a>(self, config: &CliConfig, writer: &mut Writer<'_>) -> Result<()> {
         let out = self.create_output(config).await?;
         match writer {
             Writer::File(wr) => Self::output_file(out, wr).await,
@@ -100,7 +107,7 @@ impl OutLine {
         }
     }
 
-    async fn create_output(self, config: &Args) -> Result<Out> {
+    async fn create_output(self, config: &CliConfig) -> Result<Out> {
         match config.out_format {
             OutputFormat::Csv => Ok(Out::Msg(format!(
                 "{:}, {:}, {:}",
@@ -126,25 +133,25 @@ impl OutLine {
 }
 
 pub struct Cli {
-    out_file: Option<PathBuf>,
     hit_d: Hit,
     bar: ProgressBar,
+    config: CliConfig
 }
 
 impl Cli {
-    pub fn new(config: &Args) -> Self {
+    pub fn new(config: CliConfig) -> Self {
         let bar = ProgressBar::new(0);
         bar.set_style(ProgressStyle::with_template("{msg} {spinner}\n[{elapsed_precise}] {wide_bar} {pos}/{len}\nReq/sec: {per_sec}\nETA: {eta}").unwrap());
 
         Self {
             bar,
-            out_file: config.of.clone(),
             hit_d: Hit::new(config.hit_type),
+            config
         }
     }
 
     pub async fn run(&self, intr: Intruder) -> Result<Vec<String>> {
-        let mut writer = match &self.out_file {
+        let mut writer = match &self.config.out_file {
             Some(path) => Writer::File(Box::new(
                 OpenOptions::new()
                     .write(true)
@@ -178,14 +185,13 @@ impl Cli {
                 hits += 1;
                 OutLine::new(resp, payload, hits)
                     .await?
-                    .output(&intr.config, &mut writer)
+                    .output(&self.config, &mut writer)
                     .await?;
             }
-            if hits as isize == intr.config.stop {
+            if hits as isize == self.config.stop {
                 break;
             }
         }
-        self.bar.finish();
         Ok(errors)
     }
 }

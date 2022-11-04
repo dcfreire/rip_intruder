@@ -1,9 +1,13 @@
 [package]
 name = "rip_intruder"
-version = "0.0.1"
+version = "0.0.5"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "intruder"
+path = "src/intruder/lib.rs"
 
 [dependencies]
 hyper = { version = "0.14", features = ["full"] }
