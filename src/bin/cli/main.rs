@@ -79,6 +79,10 @@ pub struct Args {
     /// Output format
     #[arg(short = 'f', long = "format", value_enum, default_value_t = OutputFormat::Csv)]
     out_format: OutputFormat,
+
+    /// Progress Bar
+    #[arg(long = "prog", default_value_t = false)]
+    progress_bar: bool,
 }
 
 fn get_configs(args: Args) -> (CliConfig, IntruderConfig){
@@ -86,7 +90,8 @@ fn get_configs(args: Args) -> (CliConfig, IntruderConfig){
         out_format: args.out_format,
         out_file: args.out_file,
         hit_type: args.hit_type,
-        stop: args.stop
+        stop: args.stop,
+        progress_bar: args.progress_bar
     };
 
     let intruderconfig = IntruderConfig {

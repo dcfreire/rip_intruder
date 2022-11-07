@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 
 use std::fmt::Display;
 use std::fs::OpenOptions;
-use std::io::prelude::*;
+use std::io::{prelude::*, stdout};
 use std::path::PathBuf;
 use futures::StreamExt;
 
@@ -23,7 +23,8 @@ pub struct CliConfig {
     pub out_format: OutputFormat,
     pub out_file: Option<PathBuf>,
     pub hit_type: HitType,
-    pub stop: isize
+    pub stop: isize,
+    pub progress_bar: bool
 }
 
 /// Struct for detecting hits
@@ -134,14 +135,19 @@ impl OutLine {
 
 pub struct Cli {
     hit_d: Hit,
-    bar: ProgressBar,
+    bar: Option<ProgressBar>,
     config: CliConfig
 }
 
 impl Cli {
     pub fn new(config: CliConfig) -> Self {
-        let bar = ProgressBar::new(0);
-        bar.set_style(ProgressStyle::with_template("{msg} {spinner}\n[{elapsed_precise}] {wide_bar} {pos}/{len}\nReq/sec: {per_sec}\nETA: {eta}").unwrap());
+        let bar = if config.progress_bar {
+            let tmp_bar = ProgressBar::new(0);
+            tmp_bar.set_style(ProgressStyle::with_template("{msg} {spinner}\n[{elapsed_precise}] {wide_bar} {pos}/{len}\nReq/sec: {per_sec}\nETA: {eta}").unwrap());
+            Some(tmp_bar)
+        } else {
+            None
+        };
 
         Self {
             bar,
@@ -149,6 +155,7 @@ impl Cli {
             config
         }
     }
+
 
     pub async fn run(&self, intr: Intruder) -> Result<Vec<String>> {
         let mut writer = match &self.config.out_file {
@@ -159,10 +166,15 @@ impl Cli {
                     .create(true)
                     .open(path)?,
             )),
-            None => Writer::Bar(&self.bar),
+            None => if let Some(bar) = &self.bar {Writer::Bar(bar)} else {Writer::File(Box::new(stdout()))},
         };
-        let payloads: Vec<String> = intr.get_payload_buffer().collect();
-        self.bar.set_length(payloads.len() as u64);
+
+        let payloads = intr.get_payload_buffer();
+
+        if let Some(bar) = &self.bar {
+            let bar_len = intr.get_payload_buffer().count();
+            bar.set_length(bar_len as u64);
+        }
 
         let mut responses = intr.bruteforce(payloads).await?;
         let mut hits = 0;
@@ -172,7 +184,9 @@ impl Cli {
             let (resp, payload);
             match resp_pay {
                 Ok(result) => {
-                    self.bar.inc(1);
+                    if let Some(bar) = &self.bar {
+                        bar.inc(1)
+                    }
                     (resp, payload) = result;
                 }
                 Err(payload) => {

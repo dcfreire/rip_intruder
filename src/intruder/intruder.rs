@@ -82,12 +82,7 @@ impl Intruder {
         T: IntoIterator<Item = String> + 'static,
     {
         let reqs = self.get_reqs(payloads);
-
-        let mut futures = vec![];
-        for (req, payload) in reqs {
-            futures.push(self.send_req(req?, payload));
-        }
-
+        let futures = reqs.map(|(req, payload)| self.send_req(req.unwrap(), payload));
         Ok(stream::iter(futures).buffer_unordered(self.config.concurrent_requests))
     }
 }
