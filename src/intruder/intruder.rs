@@ -11,13 +11,14 @@ use std::io::prelude::*;
 use std::io::BufReader;
 use std::path::PathBuf;
 
-use crate::request_template::{RequestTemplate, ReqTemplateFile};
+use crate::request_template::{AttackType, ReqTemplateFile, RequestTemplate};
 
 pub struct IntruderConfig {
     pub req_f: PathBuf,
     pub pass_f: PathBuf,
     pub pattern: String,
-    pub concurrent_requests: usize
+    pub concurrent_requests: usize,
+    pub attack_type: AttackType,
 }
 
 /// Struct for managing the bruteforcing process
@@ -38,25 +39,32 @@ impl Intruder {
             req_templ: RequestTemplate::try_from(ReqTemplateFile::new(
                 File::open(&config.req_f)?,
                 &config.pattern,
+                config.attack_type,
             )?)?,
             config,
         })
     }
 
     /// Send a single request, returns a tuple containg the response and the payload
-    async fn send_req(
+    async fn send_reqs(
         &self,
-        req: Request<Body>,
+        reqs: Vec<Request<Body>>,
         payload: String,
-    ) -> Result<(Response<Body>, String)> {
-        let resp = match self.client.request(req).await.context(payload.clone()) {
-            Ok(out) => out,
-            Err(_) => return Err(anyhow!(payload)),
-        };
-        Ok((resp, payload))
+    ) -> Result<(Vec<Response<Body>>, String)> {
+        let mut resps = vec![];
+        for req in reqs {
+            match self.client.request(req).await.context(payload.clone()) {
+                Ok(out) => resps.push(out),
+                Err(_) => return Err(anyhow!(payload)),
+            };
+        }
+        Ok((resps, payload))
     }
 
-    fn get_reqs<T>(&self, payloads: T) -> impl Iterator<Item = (Result<Request<Body>>, String)> + '_
+    fn get_reqs<T>(
+        &self,
+        payloads: T,
+    ) -> impl Iterator<Item = (Result<Vec<Request<Body>>>, String)> + '_
     where
         T: IntoIterator<Item = String> + 'static,
     {
@@ -77,12 +85,13 @@ impl Intruder {
     pub async fn bruteforce<T>(
         &self,
         payloads: T,
-    ) -> Result<impl Stream<Item = Result<(Response<Body>, String)>> + '_>
+    ) -> Result<impl Stream<Item = Result<(Vec<Response<Body>>, String)>> + '_>
     where
         T: IntoIterator<Item = String> + 'static,
     {
-        let reqs = self.get_reqs(payloads);
-        let futures = reqs.map(|(req, payload)| self.send_req(req.unwrap(), payload));
+        let futures = self
+            .get_reqs(payloads)
+            .map(|(req, payload)| self.send_reqs(req.unwrap(), payload));
         Ok(stream::iter(futures).buffer_unordered(self.config.concurrent_requests))
     }
 }

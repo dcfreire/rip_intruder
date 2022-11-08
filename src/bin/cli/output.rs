@@ -1,7 +1,4 @@
-
-
 use anyhow::Result;
-
 
 use hyper::body;
 use hyper::{Body, Response, StatusCode};
@@ -11,20 +8,20 @@ use indicatif::{ProgressBar, ProgressStyle};
 use intruder::intruder::Intruder;
 use serde_json::{json, Value};
 
+use futures::StreamExt;
 use std::fmt::Display;
 use std::fs::OpenOptions;
 use std::io::{prelude::*, stdout};
 use std::path::PathBuf;
-use futures::StreamExt;
 
-use crate::arg_types::{OutputFormat, HitType};
+use crate::cli_enums::{HitType, OutputFormat};
 
 pub struct CliConfig {
     pub out_format: OutputFormat,
     pub out_file: Option<PathBuf>,
     pub hit_type: HitType,
     pub stop: isize,
-    pub progress_bar: bool
+    pub progress_bar: bool,
 }
 
 /// Struct for detecting hits
@@ -100,7 +97,11 @@ impl OutLine {
     }
 
     /// Writes output, consuming self in the process.
-    pub(crate) async fn output<'a>(self, config: &CliConfig, writer: &mut Writer<'_>) -> Result<()> {
+    pub(crate) async fn output<'a>(
+        self,
+        config: &CliConfig,
+        writer: &mut Writer<'_>,
+    ) -> Result<()> {
         let out = self.create_output(config).await?;
         match writer {
             Writer::File(wr) => Self::output_file(out, wr).await,
@@ -136,7 +137,7 @@ impl OutLine {
 pub struct Cli {
     hit_d: Hit,
     bar: Option<ProgressBar>,
-    config: CliConfig
+    config: CliConfig,
 }
 
 impl Cli {
@@ -152,10 +153,9 @@ impl Cli {
         Self {
             bar,
             hit_d: Hit::new(config.hit_type),
-            config
+            config,
         }
     }
-
 
     pub async fn run(&self, intr: Intruder) -> Result<Vec<String>> {
         let mut writer = match &self.config.out_file {
@@ -166,7 +166,13 @@ impl Cli {
                     .create(true)
                     .open(path)?,
             )),
-            None => if let Some(bar) = &self.bar {Writer::Bar(bar)} else {Writer::File(Box::new(stdout()))},
+            None => {
+                if let Some(bar) = &self.bar {
+                    Writer::Bar(bar)
+                } else {
+                    Writer::File(Box::new(stdout()))
+                }
+            }
         };
 
         let payloads = intr.get_payload_buffer();
@@ -181,13 +187,13 @@ impl Cli {
         let mut errors = vec![];
 
         while let Some(resp_pay) = responses.next().await {
-            let (resp, payload);
+            let (responses, payload);
             match resp_pay {
                 Ok(result) => {
                     if let Some(bar) = &self.bar {
                         bar.inc(1)
                     }
-                    (resp, payload) = result;
+                    (responses, payload) = result;
                 }
                 Err(payload) => {
                     errors.push(payload.to_string());
@@ -195,15 +201,17 @@ impl Cli {
                 }
             }
 
-            if self.hit_d.is_hit(&resp) {
-                hits += 1;
-                OutLine::new(resp, payload, hits)
-                    .await?
-                    .output(&self.config, &mut writer)
-                    .await?;
-            }
-            if hits as isize == self.config.stop {
-                break;
+            for resp in responses {
+                if self.hit_d.is_hit(&resp) {
+                    hits += 1;
+                    OutLine::new(resp, payload.clone(), hits)
+                        .await?
+                        .output(&self.config, &mut writer)
+                        .await?;
+                }
+                if hits as isize == self.config.stop {
+                    break;
+                }
             }
         }
         Ok(errors)

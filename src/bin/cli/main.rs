@@ -31,13 +31,14 @@
 //!   -V, --version
 //!           Print version information
 //! ```
-mod arg_types;
+mod cli_enums;
 mod output;
 
+use cli_enums::AttackTypeCli;
 use intruder::intruder::Intruder;
 use intruder::intruder::IntruderConfig;
 use output::Cli;
-use arg_types::{HitType, OutputFormat};
+use cli_enums::{HitType, OutputFormat};
 use anyhow::Result;
 use clap::Parser;
 use output::CliConfig;
@@ -83,6 +84,10 @@ pub struct Args {
     /// Progress Bar
     #[arg(long = "prog", default_value_t = false)]
     progress_bar: bool,
+
+    /// Attack type
+    #[arg(short, long, value_enum, default_value_t = AttackTypeCli::BatteringRam)]
+    attack_type: AttackTypeCli
 }
 
 fn get_configs(args: Args) -> (CliConfig, IntruderConfig){
@@ -98,7 +103,8 @@ fn get_configs(args: Args) -> (CliConfig, IntruderConfig){
         req_f: args.req_f,
         pass_f: args.pass_f,
         pattern: args.pattern,
-        concurrent_requests: args.concurrent_requests
+        concurrent_requests: args.concurrent_requests,
+        attack_type: args.attack_type.into()
     };
 
     (cliconfig, intruderconfig)

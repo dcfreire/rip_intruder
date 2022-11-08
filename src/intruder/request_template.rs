@@ -5,6 +5,7 @@ use anyhow::{anyhow, Error, Result};
 
 use hyper::header::HeaderName;
 use hyper::http::header::HeaderValue;
+use hyper::http::request::Builder;
 use hyper::{Body, HeaderMap, Method, Request, Uri, Version};
 
 use itertools::Itertools;
@@ -12,6 +13,14 @@ use regex::Regex;
 
 use std::fs::File;
 use std::io::{prelude::*, BufReader};
+
+#[derive(Copy, Clone, Debug)]
+pub enum AttackType {
+    Sniper,
+    BatteringRam,
+    Pitchfork,
+    ClusterBomb
+}
 
 /// Represents the components of a request for recreating the [Request] object
 ///
@@ -56,6 +65,7 @@ pub struct RequestTemplate {
     pub req: RequestComponents,
     pub marked: Vec<Part>,
     pub pattern: Regex,
+    pub attack_type: AttackType
 }
 
 /// Either a element in the header is marked, or an element in the body.
@@ -129,6 +139,7 @@ impl TryFrom<ReqTemplateFile> for RequestTemplate {
             req: req,
             marked,
             pattern: pattern,
+            attack_type: req_templ.attack_type
         })
     }
 }
@@ -139,6 +150,7 @@ impl TryFrom<File> for RequestTemplate {
         RequestTemplate::try_from(ReqTemplateFile {
             file: req_file,
             pattern: Regex::new("§§")?,
+            attack_type: AttackType::BatteringRam
         })
     }
 }
@@ -148,27 +160,22 @@ impl TryFrom<File> for RequestTemplate {
 pub struct ReqTemplateFile {
     file: File,
     pattern: Regex,
+    attack_type: AttackType,
 }
 
 impl ReqTemplateFile {
-    pub fn new(file: File, pattern: &str) -> Result<Self> {
+    pub fn new(file: File, pattern: &str, attack_type: AttackType) -> Result<Self> {
         Ok(Self {
             file,
-            pattern: Regex::new(pattern)?
+            pattern: Regex::new(pattern)?,
+            attack_type
         })
     }
 }
 
 impl RequestTemplate {
-    /// Replace the marked Parts with pw and build a new Request from them.
-    pub fn replace_then_request(&self, pw: &str) -> Result<Request<Body>> {
+    fn battering_ram(&self, pw: &str, mut req: Builder) -> Result<Vec<Request<Body>>> {
         let mut body: &String = &self.req.body;
-        let mut req = Request::builder()
-            .version(self.req.version)
-            .method(self.req.method.clone())
-            .uri(self.req.uri.clone());
-        let headers = req.headers_mut().ok_or(anyhow!("Builder has error"))?;
-        headers.clone_from(&self.req.head);
         for part in &self.marked {
             match part {
                 Part::Header(header) => {
@@ -186,6 +193,34 @@ impl RequestTemplate {
                 }
             }
         }
-        Ok(req.body(Body::from(self.pattern.replace_all(body, pw).to_string()))?)
+        Ok(vec![req.body(Body::from(self.pattern.replace_all(body, pw).to_string()))?])
+    }
+
+    fn cluster_bomb(&self, pw: &str, mut req: Builder) -> Result<Vec<Request<Body>>> {
+        Err(anyhow!("Not Implemented"))
+    }
+
+    fn pitchfork(&self, pw: &str, mut req: Builder) -> Result<Vec<Request<Body>>> {
+        Err(anyhow!("Not Implemented"))
+    }
+
+    fn sniper(&self, pw: &str, mut req: Builder) -> Result<Vec<Request<Body>>> {
+        Err(anyhow!("Not Implemented"))
+    }
+
+    /// Replace the marked Parts with pw and build a new Request from them.
+    pub fn replace_then_request(&self, pw: &str) -> Result<Vec<Request<Body>>> {
+        let mut req = Request::builder()
+            .version(self.req.version)
+            .method(self.req.method.clone())
+            .uri(self.req.uri.clone());
+        let headers = req.headers_mut().ok_or(anyhow!("Builder has error"))?;
+        headers.clone_from(&self.req.head);
+        match self.attack_type {
+            AttackType::BatteringRam => self.battering_ram(pw, req),
+            AttackType::ClusterBomb => self.cluster_bomb(pw, req),
+            AttackType::Pitchfork => self.pitchfork(pw, req),
+            AttackType::Sniper => self.sniper(pw, req)
+        }
     }
 }
